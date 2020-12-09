@@ -1,3 +1,4 @@
+
 #include <ctype.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -5,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <signal.h>
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -16,12 +17,22 @@
 #include "find_min_max.h"
 #include "utils.h"
 
+volatile pid_t* child_processes_array;
+volatile int child_processes_number;
+
+static void sigalarm(int signal)  {
+   for (int i = 0; i<child_processes_number; i++) {
+     printf("killing child processes - %i",child_processes_array[i]);
+     kill(child_processes_array[i], SIGKILL);
+   } 
+  }
 
 int main(int argc, char **argv) {
   int seed = -1;
   int array_size = -1;
   int pnum = -1;
   bool with_files = false;
+  int timeout = -1;
 
   while (true) {
     int current_optind = optind ? optind : 1;
@@ -30,6 +41,7 @@ int main(int argc, char **argv) {
                                       {"array_size", required_argument, 0, 0},
                                       {"pnum", required_argument, 0, 0},
                                       {"by_files", no_argument, 0, 'f'},
+				      {"timeout", required_argument, 0, 0},
                                       {0, 0, 0, 0}};
 
     int option_index = 0;
@@ -51,6 +63,9 @@ int main(int argc, char **argv) {
             break;
           case 3:
             with_files = true;
+            break;
+	  case 4:
+            timeout = atoi(optarg);
             break;
 
           defalut:
@@ -85,6 +100,12 @@ int main(int argc, char **argv) {
   int active_child_processes = 0;
   int active_array_step = pnum < array_size ? (array_size / pnum) : 1;
 
+   if (timeout != -1) {
+    printf("SET TIMEOUT\n");
+    alarm(timeout);
+    signal(SIGALRM, sigalarm);
+  }
+
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
   int pipefd[2];
@@ -99,6 +120,9 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
      }
     } 
+
+  child_processes_array = (pid_t*)malloc(pnum * sizeof(pid_t));
+  child_processes_number = 0;
 
   for (int i = 0; i < pnum; i++) {
     pid_t child_pid = fork();
@@ -133,7 +157,8 @@ int main(int argc, char **argv) {
   }
 
   while (active_child_processes > 0) {
-    wait(NULL);
+    int status = -1;
+    waitpid(-1, &status, WNOHANG);
     active_child_processes -= 1;
   }
   
